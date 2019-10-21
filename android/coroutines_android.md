@@ -171,6 +171,156 @@ println("main: Now I can quit.")
 
 즉, `job.cancel()`이 호출되면 `isActive`값이 `false`가 되기 때문에 이를 체크해줘야한다. 안과 밖이 서로 협동을 해야한다.
 
+호오.. 이렇게도 cancelling을 핸들링할수도있다:
+
+```kotlin
+val job = launch {
+    try {
+        repeat(1000) { i ->
+            println("job: I'm sleeping $i ...")
+            delay(500L)
+        }
+    } finally {
+        println("job: I'm running finally")
+    }
+}
+delay(1300L) // delay a bit
+println("main: I'm tired of waiting!")
+job.cancelAndJoin() // cancels the job and waits for its completion
+println("main: Now I can quit.")
+```
+
+```
+Output:
+job: I'm sleeping 0 ...
+job: I'm sleeping 1 ...
+job: I'm sleeping 2 ...
+main: I'm tired of waiting!
+job: I'm running finally
+main: Now I can quit.
+```
+
+`job.cancel()`을 하면 저 블럭 안에 `CancellationException`이 불리기 때문에 바로 finally로 넘어가는 것이다.
+주의할점은 `job.join()`만 하면 캔슬이 안된다는거.
+
+명시적으로 timeout을 설정할 수도 있음:
+
+```kotlin
+withTimeout(1300L) {
+    repeat(1000) { i ->
+        println("I'm sleeping $i ...")
+        delay(500L)
+    }
+}
+```
+
+```
+Output:
+I'm sleeping 0 ...
+I'm sleeping 1 ...
+I'm sleeping 2 ...
+Exception in thread "main" kotlinx.coroutines.TimeoutCancellationException: Timed out waiting for 1300 ms
+```
+
+## Composing Suspending Functions
+
+두 개 이상의 job을 sequentially가 아닌 concurrently하게 돌리고 싶을 땐 `async`를 사용한다.
+
+```kotlin
+suspend fun doSomethingUsefulOne(): Int {
+    delay(1000L)
+    return 13
+}
+
+suspend fun doSomethingUsefulTwo(): Int {
+    delay(1000L)
+    return 29
+}
+
+val time = measureTimeMillis {
+    val one = async { doSomethingUsefulOne() }
+    val two = async { doSomethingUsefulTwo() }
+    println("The answer is ${one.await() + two.await()}")
+}
+println("Completed in $time ms")
+```
+
+```
+Output:
+The answer is 42
+Completed in 1017 ms
+```
+
+async를 안쓰고 돌렸다면 sequentially 하게 돌아서 `Completed in 2017 ms`가 나왔을 것이다.
+
+Conceptually, async is just like launch. It starts a separate coroutine which is a light-weight thread that works concurrently with all the other coroutines. The difference is that launch returns a Job and does not carry any resulting value, while async returns a Deferred — a light-weight non-blocking future that represents a promise to provide a result later. You can use .await() on a deferred value to get its eventual result, but Deferred is also a Job, so you can cancel it if needed.
+
+**Note that concurrency with coroutines is always explicit.** Rx와 비슷한 원칙이네.
+
+Optionally, async can be made lazy by setting its start parameter to CoroutineStart.LAZY. In this mode it only starts the coroutine when its result is required by await, or if its Job's start function is invoked.
+
+```kotlin
+val time = measureTimeMillis {
+    val one = async(start = CoroutineStart.LAZY) { doSomethingUsefulOne() }
+    val two = async(start = CoroutineStart.LAZY) { doSomethingUsefulTwo() }
+    // some computation
+    one.start() // start the first one
+    two.start() // start the second one
+    println("The answer is ${one.await() + two.await()}")
+}
+println("Completed in $time ms")
+```
+
+So, here the two coroutines are defined but not executed as in the previous example, but the control is given to the programmer on when exactly to start the execution by calling start. We first start one, then start two, and then await for the individual coroutines to finish.
+
+## Coroutine Context and Dispatchers
+
+Coroutines always execute in some context represented by a value of the CoroutineContext type.
+The coroutine context is a set of various elements. The main elements are the Job of the coroutine, which we've seen before, and its dispatcher.
+
+A coroutine dispatcher determines what thread or threads the corresponding coroutine uses for its execution. It can confine coroutine execution to a specific thread, dispatch it to a thread pool, or let it run unconfined.
+
+All coroutine builders like launch and async accept an optional CoroutineContext parameter that can be used to explicitly specify the dispatcher for the new coroutine and other context elements.
+
+```kotlin
+launch(newSingleThreadContext("MyOwnThread")) { // will get its own new thread
+    println("newSingleThreadContext: I'm working in thread ${Thread.currentThread().name}")
+}
+```
+
+`newSingleThreadContext` creates a thread for the coroutine to run. A dedicated thread is a very expensive resource. In a real application it must be either released, when no longer needed, using the close function, or stored in a top-level variable and reused throughout the application.
+
+The coroutine's Job is part of its context, and can be retrieved from it using the `coroutineContext[Job]` expression:
+
+```kotlin
+println("My job is ${coroutineContext[Job]}")
+```
+
+```
+Output:
+My job is "coroutine#1":BlockingCoroutine{Active}@6d311334
+```
+
+Note that `isActive` in `CoroutineScope` is just a convenient shortcut for `coroutineContext[Job]?.isActive == true`.
+
+Automatically assigned ids are good when coroutines log often and you just need to correlate log records coming from the same coroutine. However, when a coroutine is tied to the processing of a specific request or doing some specific background task, it is better to name it explicitly for debugging purposes. The CoroutineName context element serves the same purpose as the thread name. It is included in the thread name that is executing this coroutine when the debugging mode is turned on.
+
+```kotlin
+val v1 = async(CoroutineName("v1coroutine")) {
+    delay(500)
+    log("Computing v1")
+    252
+}
+```
+
+Sometimes we need to define multiple elements for a coroutine context. We can use the `+` operator for that. For example, we can launch a coroutine with an explicitly specified dispatcher and an explicitly specified name at the same time:
+
+```kotlin
+launch(Dispatchers.Default + CoroutineName("test")) {
+    println("I'm working in thread ${Thread.currentThread().name}")
+}
+```
+
 ## Reference
 
 - https://kotlinlang.org/docs/reference/coroutines/coroutines-guide.html
