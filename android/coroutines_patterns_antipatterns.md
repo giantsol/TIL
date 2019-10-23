@@ -96,7 +96,107 @@ launch {
 
 이거 내가 아까 의문이들어서 김토미한테 질문했었던거네.
 
-// todo: To be continued...
+```kotlin
+val job = SupervisorJob()
+val scope = CoroutineScope(Dispatchers.Default + job)
+
+fun doWork1() {
+    scope.launch { /* do work */ }
+}
+
+fun doWork2() {
+    scope.launch { /* do work */ }
+}
+
+fun cancelAllWork() {
+    job.cancel()
+}
+```
+
+위처럼 scope 안에 있는 모든 job들을 캔슬하고 싶을 때 scope job 자체를 캔슬해버리면 그 뒤에 scope.launch 가 하나도 작동하지 않게 된다.
+그래서 이런 경우에는 `job.cancelChildren()`을 해주는게 좋다.
+
+```kotlin
+fun cancelAllWork() {
+    job.cancelChildren()
+}
+```
+
+## 5. Avoid writing suspend function with an implicit dispatcher
+
+Don’t write suspend function which relies on execution from specific coroutine dispatcher.
+
+```kotlin
+suspend fun login(): Result {
+    view.showLoading()
+    
+    val result = withContext(Dispatcher.IO) {  
+        someBlockingCall() 
+    }
+    view.hideLoading()
+    
+    return result
+}
+
+launch(Dispatcher.Main) {     // (1) no crash
+    val loginResult = login()
+    ...
+}
+
+launch(Dispatcher.Default) {  // (2) cause crash
+    val loginResult = login()
+    ...
+}
+```
+
+```kotlin
+suspend fun login(): Result = withContext(Dispatcher.Main) {
+    view.showLoading()
+    
+    val result = withContext(Dispatcher.IO) {  
+        someBlockingCall() 
+    }
+    
+    view.hideLoading()
+	return result
+}
+
+launch(Dispatcher.Main) {     // (1) no crash
+    val loginResult = login()
+    ...
+}
+
+launch(Dispatcher.Default) {  // (2) no crash either
+    val loginResult = login()
+    ...
+}
+```
+
+Design your suspend function in a way that it can be executed from any coroutine dispatcher.
+
+## Avoid usage of global scope
+
+심플하게 `GlobalScope.launch`를 쓸 필요가 없다는거.
+특히 안드로이드에서는 Activity, Fragment 들의 lifecycle이 있기 때문에 거기에 맞춰 사용하는게 당연히 좋다.
+
+```kotlin
+class MainActivity : AppCompatActivity(), CoroutineScope {
+    
+    private val job = SupervisorJob()
+    
+    override val coroutineContext: CoroutineContext
+        get() = Dispatchers.Main + job
+    
+    override fun onDestroy() {
+        super.onDestroy()
+        coroutineContext.cancelChildren()
+    }
+    
+    fun loadData() = launch {
+        // code
+    }
+}
+```
 
 ## Reference
 
