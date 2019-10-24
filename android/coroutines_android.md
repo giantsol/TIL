@@ -321,6 +321,100 @@ launch(Dispatchers.Default + CoroutineName("test")) {
 }
 ```
 
+## Asynchronous Flow
+
+Suspending functions asynchronously returns a single value, but how can we return multiple asynchronously computed values? This is where Kotlin Flows come in.
+
+To represent the stream of values that are being asynchronously computed, we can use a Flow<Int> type just like we would the Sequence<Int> type for synchronously computed values:
+
+```kotlin
+fun foo(): Flow<Int> = flow { // flow builder
+    for (i in 1..3) {
+        delay(100) // pretend we are doing something useful here
+        emit(i) // emit next value
+    }
+}
+
+fun main() = runBlocking<Unit> {
+    // Launch a concurrent coroutine to check if the main thread is blocked
+    launch {
+        for (k in 1..3) {
+            println("I'm not blocked $k")
+            delay(100)
+        }
+    }
+    // Collect the flow
+    foo().collect { value -> println(value) } 
+}
+```
+
+```
+Output:
+I'm not blocked 1
+1
+I'm not blocked 2
+2
+I'm not blocked 3
+3
+```
+
+Flows are cold streams similar to sequences — the code inside a flow builder does not run until the flow is collected
+
+```kotlin
+fun foo(): Flow<Int> = flow { 
+    println("Flow started")
+    for (i in 1..3) {
+        delay(100)
+        emit(i)
+    }
+}
+
+fun main() = runBlocking<Unit> {
+    println("Calling foo...")
+    val flow = foo()
+    println("Calling collect...")
+    flow.collect { value -> println(value) } 
+    println("Calling collect again...")
+    flow.collect { value -> println(value) } 
+}
+```
+
+```
+Output:
+Calling foo...
+Calling collect...
+Flow started
+1
+2
+3
+Calling collect again...
+Flow started
+1
+2
+3
+```
+
+This is a key reason the foo() function (which returns a flow) is not marked with suspend modifier. By itself, foo() returns quickly and does not wait for anything.
+
+Handling cancellation in flow works like this:
+
+```kotlin
+fun foo(): Flow<Int> = flow { 
+    for (i in 1..3) {
+        delay(100)          
+        println("Emitting $i")
+        emit(i)
+    }
+}
+
+fun main() = runBlocking<Unit> {
+    withTimeoutOrNull(250) { // Timeout after 250ms 
+        foo().collect { value -> println(value) } 
+    }
+    println("Done")
+}
+```
+
 ## Reference
 
 - https://kotlinlang.org/docs/reference/coroutines/coroutines-guide.html
