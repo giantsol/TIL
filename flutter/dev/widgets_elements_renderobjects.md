@@ -35,3 +35,65 @@ There are two primary categories of [StatefulWidget]s.
 The first is one which allocates resources in [State.initState] and disposes of them in [State.dispose], but which does not depend on [InheritedWidget]s or call [State.setState]. Such widgets are commonly used at the root of an application or page, and communicate with subwidgets via [ChangeNotifier]s, [Stream]s, or other such objects. Stateful widgets following such a pattern are relatively cheap (in terms of CPU and GPU cycles), because they are built once then never update. They can, therefore, have somewhat complicated and deep build methods.
 
 The second category is widgets that use [State.setState] or depend on [InheritedWidget]s. These will typically rebuild many times during the application's lifetime, and it is therefore important to minimize the impact of rebuilding such a widget. (They may also use [State.initState] or [State.didChangeDependencies] and allocate resources, but the important part is that they rebuild.)
+
+# ComponentElement
+
+An [Element] that composes other [Element]s.
+
+Rather than creating a [RenderObject] directly, a [ComponentElement] creates
+[RenderObject]s indirectly by creating other [Element]s.
+
+Contrast with [RenderObjectElement].
+
+# RenderObjectElement
+
+An [Element] that uses a [RenderObjectWidget] as its configuration.
+
+[RenderObjectElement] objects have an associated [RenderObject] widget in the render tree, which handles concrete operations like laying out, painting, and hit testing.
+
+There are three common child models used by most [RenderObject]s:
+
+* Leaf render objects, with no children: The [LeafRenderObjectElement] class handles this case.
+
+* A single child: The [SingleChildRenderObjectElement] class handles this case.
+
+* A linked list of children: The [MultiChildRenderObjectElement] class handles this case.
+
+Sometimes, however, a render object's child model is more complicated. Maybe it has a two-dimensional array of children. Maybe it constructs children on demand. Maybe it features multiple lists. In such situations, the corresponding [Element] for the [Widget] that configures that [RenderObject] will be a new subclass of [RenderObjectElement].
+
+[RenderObjectElement] objects spend much of their time acting as intermediaries between their [widget] and their [renderObject]. To make this more tractable, most [RenderObjectElement] subclasses override these getters so that they return the specific type that the element expects, e.g.:
+
+```dart
+class FooElement extends RenderObjectElement {
+
+  @override
+  Foo get widget => super.widget;
+
+  @override
+  RenderFoo get renderObject => super.renderObject;
+
+  // ...
+}
+```
+
+# RenderObject
+
+An object in the render tree.
+
+The [RenderObject] class hierarchy is the core of the rendering library's reason for being.
+
+The [RenderObject] class also implements the basic layout and paint protocols.
+
+The [RenderObject] class, however, does not define a child model (e.g. whether a node has zero, one, or more children). It also doesn't define a coordinate system (e.g. whether children are positioned in Cartesian coordinates, in polar coordinates, etc) or a specific layout protocol (e.g. whether the layout is width-in-height-out, or constraint-in-size-out, or whether the parent sets the size and position of the child before or after the child lays out, etc; or indeed whether the children are allowed to read their parent's [parentData] slot).
+
+The [RenderBox] subclass introduces the opinion that the layout system uses Cartesian coordinates.
+
+In most cases, subclassing [RenderObject] itself is overkill, and [RenderBox] would be a better starting point. However, if a render object doesn't want to use a Cartesian coordinate system, then it should indeed inherit from [RenderObject] directly. This allows it to define its own layout protocol by using a new subclass of [Constraints] rather than using [BoxConstraints], and by potentially using an entirely new set of objects and values to represent the result of the output rather than just a [Size]. This increased flexibility comes at the cost of not being able to rely on the features of [RenderBox]. For example, [RenderBox] implements an intrinsic sizing protocol that allows you to measure a child without fully laying it out, in such a way that if that child changes size, the parent will be laid out again (to take into account the new dimensions of the child). This is a subtle and bug-prone feature to get right.
+
+The [performLayout] method should take the [constraints], and apply them. The output of the layout algorithm is fields set on the object that describe the geometry of the object for the purposes of the parent's layout. For example, with [RenderBox] the output is the [RenderBox.size] field. This output should only be read by the parent if the parent specified `parentUsesSize` as true when calling [layout] on the child.
+
+Anytime anything changes on a render object that would affect the layout of that object, it should call [markNeedsLayout].
+
+In general, the root of a Flutter render object tree is a [RenderView]. This object has a single child, which must be a [RenderBox]. Thus, if you want to have a custom [RenderObject] subclass in the render tree, you have two choices: you either need to replace the [RenderView] itself, or you need to have a [RenderBox] that has your class as its child. (The latter is the much more common case.)
+
+In general, the layout of a render object should only depend on the output of its child's layout, and then only if `parentUsesSize` is set to true in the [layout] call. Furthermore, if it is set to true, the parent must call the child's [layout] if the child is to be rendered, because otherwise the parent will not be notified when the child changes its layout outputs.
