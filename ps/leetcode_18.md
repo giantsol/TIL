@@ -44,6 +44,7 @@ data class Quad(val first: Int,
 ```
 
 Time complexity: O(n^3)
+
 TwoSum, ThreeSum이랑 똑같은 원리.
 O(n^3)이 최적의 솔루션!
 밥먹자마자 자버려가지고 속이 안좋다 윽..
